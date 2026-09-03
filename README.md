@@ -2,17 +2,16 @@
 
 
 
-# [Project Name] 🎯
+# Alarming Alarm 🎯
 
 
 ## Basic Details
-### Team Name: [Name]
+### Team Name: Never Call Saul
 
 
 ### Team Members
-- Team Lead: [Name] - [College]
-- Member 2: [Name] - [College]
-- Member 3: [Name] - [College]
+- Member 1: Akash Krishnan U - Model Engineering College 
+- Member 2: Aldrin Baiju - Model Engineering College 
 
 ### Project Description
 [2-3 lines about what your project does]
