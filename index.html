@@ -1,1 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Random Match Alarm — Dashboard</title>
 
+<!-- Firebase SDKs (compat version = works with plain <script> tags, no build tools) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+
+<style>
+  *{box-sizing:border-box;}
+  body{
+    font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:24px 16px;
+    background:linear-gradient(135deg,#1a1a2e,#16213e);color:#eee;
+    min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  }
+  h1{font-size:1.6em;margin-bottom:4px;text-align:center;}
+  p.sub{color:#9aa0b4;margin-top:0;margin-bottom:20px;text-align:center;}
+  .status{
+    display:inline-block;padding:6px 18px;border-radius:20px;
+    font-weight:bold;margin-bottom:24px;background:#2a9d8f;transition:background 0.3s;
+  }
+  .status.active{background:#e63946;}
+  .card{
+    background:#22223b;border-radius:16px;padding:20px;margin-bottom:18px;
+    width:100%;max-width:420px;box-shadow:0 4px 14px rgba(0,0,0,0.4);
+  }
+  .card h2{margin-top:0;font-size:1.1em;color:#c9c9e8;}
+  .card p{color:#9aa0b4;font-size:0.9em;}
+  input[type=time],input[type=datetime-local]{
+    width:100%;font-size:1.1em;padding:10px;border-radius:8px;border:none;margin:8px 0;
+  }
+  button{
+    width:100%;font-size:1.1em;padding:12px;margin-top:6px;
+    border-radius:8px;border:none;color:white;cursor:pointer;font-weight:bold;
+  }
+  .btn-save{background:#4361ee;}
+  .btn-save:hover{background:#5a75f5;}
+  .btn-kill{background:#e63946;font-size:1.2em;padding:16px;}
+  .btn-kill:hover{background:#ff4d5e;}
+  .stat-row{display:flex;justify-content:space-between;font-size:0.95em;margin:4px 0;}
+  .stat-row span:first-child{color:#9aa0b4;}
+
+  /* Console */
+  .console{
+    background:#0d0d15;border-radius:10px;padding:12px;
+    height:220px;overflow-y:auto;font-family:'Consolas','Courier New',monospace;
+    font-size:0.85em;line-height:1.5;border:1px solid #333;
+  }
+  .console::-webkit-scrollbar{width:6px;}
+  .console::-webkit-scrollbar-thumb{background:#444;border-radius:4px;}
+  .log-line{margin-bottom:4px;white-space:pre-wrap;word-break:break-word;}
+  .log-time{color:#666;}
+  .log-msg{color:#e63946;font-weight:bold;}
+  .log-detail{color:#9aa0b4;}
+  .log-empty{color:#555;font-style:italic;}
+
+  #connState{font-size:0.8em;color:#666;margin-top:20px;}
+</style>
+</head>
+<body>
+
+<h1>Random Match Alarm</h1>
+<p class="sub">Remote dashboard</p>
+<div class="status" id="statusPill">Loading…</div>
+
+<div class="card">
+  <h2>Kill Switch</h2>
+  <p>Instantly force the alarm off, wherever the device is.</p>
+  <button class="btn-kill" onclick="triggerKill()">STOP ALARM NOW</button>
+</div>
+
+<div class="card">
+  <h2>Set Alarm Time</h2>
+  <p>When the alarm session begins each day.</p>
+  <input type="time" id="alarmTimeInput">
+  <button class="btn-save" onclick="saveAlarmTime()">Save Alarm</button>
+  <p id="currentAlarmText"></p>
+</div>
+
+<div class="card">
+  <h2>Set Device Clock</h2>
+  <p>Corrects the RTC's actual date/time (separate from the alarm time above).</p>
+  <input type="datetime-local" id="clockInput">
+  <button class="btn-save" onclick="saveDeviceClock()">Sync Clock</button>
+  <p id="clockConfirm"></p>
+</div>
+
+<div class="card">
+  <h2>Live Stats</h2>
+  <div class="stat-row"><span>Attempts</span><span id="statAttempts">—</span></div>
+  <div class="stat-row"><span>Current sound</span><span id="statSound">—</span></div>
+</div>
+
+<div class="card">
+  <h2>Console</h2>
+  <p>Live feed of every failed attempt — the number rolled, which zone it fell in, and which sound was playing.</p>
+  <div class="console" id="consoleBox">
+    <div class="log-empty">Waiting for failed attempts…</div>
+  </div>
+</div>
+
+<div id="connState">connecting to Firebase…</div>
+
+<script>
+  // ---- 1. Paste your own Firebase project config here ----
+  const firebaseConfig = {
+     apiKey: "AIzaSyD_H2x3EXgKTDTCOKYtnb68ImCdg4lWnx4",
+     databaseURL: "https://alarming-alarm-default-rtdb.firebaseio.com",
+     projectId: "alarming-alarm"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  // ---- 2. Connection state indicator (handy for debugging) ----
+  db.ref('.info/connected').on('value', (snap) => {
+    document.getElementById('connState').innerText =
+      snap.val() ? 'connected to Firebase' : 'disconnected — check config/internet';
+  });
+
+  // ---- 3. Live status + stats ----
+  db.ref('/alarm/status').on('value', (snap) => {
+    const status = snap.val() || 'idle';
+    const pill = document.getElementById('statusPill');
+    pill.innerText = status.toUpperCase();
+    pill.classList.toggle('active', status === 'active');
+  });
+
+  db.ref('/alarm/attempts').on('value', (snap) => {
+    document.getElementById('statAttempts').innerText = snap.val() ?? '—';
+  });
+
+  db.ref('/alarm/currentSound').on('value', (snap) => {
+    const s = snap.val();
+    document.getElementById('statSound').innerText = s != null ? ('Sound ' + (s + 1)) : '—';
+  });
+
+  // ---- 4. Alarm time: pre-fill the input with current value ----
+  function updateAlarmTimeDisplay() {
+    Promise.all([
+      db.ref('/alarm/alarmHour').once('value'),
+      db.ref('/alarm/alarmMinute').once('value')
+    ]).then(([hSnap, mSnap]) => {
+      const h = hSnap.val() ?? 7;
+      const m = mSnap.val() ?? 0;
+      const hh = String(h).padStart(2, '0');
+      const mm = String(m).padStart(2, '0');
+      document.getElementById('alarmTimeInput').value = `${hh}:${mm}`;
+      document.getElementById('currentAlarmText').innerText = `Current alarm: ${hh}:${mm}`;
+    });
+  }
+  updateAlarmTimeDisplay();
+
+  // ---- 5. Actions ----
+  function triggerKill() {
+    db.ref('/alarm/killSwitch').set(true);
+  }
+
+  function saveAlarmTime() {
+    const val = document.getElementById('alarmTimeInput').value; // "HH:MM"
+    if (!val) return;
+    const [h, m] = val.split(':').map(Number);
+    db.ref('/alarm').update({ alarmHour: h, alarmMinute: m });
+    updateAlarmTimeDisplay();
+  }
+
+  function saveDeviceClock() {
+    const val = document.getElementById('clockInput').value; // "YYYY-MM-DDTHH:MM"
+    if (!val) return;
+    const [datePart, timePart] = val.split('T');
+    const [year, month, day] = datePart.split('-').map(Number);
+    const [hour, minute] = timePart.split(':').map(Number);
+
+    db.ref('/alarm/clockSet').set({
+      year, month, day, hour, minute,
+      requested: true          // ESP32 watches this flag, applies it, then flips it back to false
+    });
+
+    document.getElementById('clockConfirm').innerText =
+      `Sent: ${datePart} ${timePart} — waiting for device to apply…`;
+  }
+
+  // reflect once the ESP32 confirms it applied the clock sync
+  db.ref('/alarm/clockSet/requested').on('value', (snap) => {
+    if (snap.val() === false) {
+      document.getElementById('clockConfirm').innerText = 'Device clock synced.';
+    }
+  });
+
+  // ---- 6. Console: live feed of failed attempts ----
+  // Expects the ESP32 to push() an object to /alarm/logs for every WRONG number:
+  //   { number, zone, sound, message, timestamp }
+  const consoleBox = document.getElementById('consoleBox');
+  let consoleStarted = false;
+
+  db.ref('/alarm/logs').limitToLast(30).on('child_added', (snap) => {
+    if (!consoleStarted) {
+      consoleBox.innerHTML = ''; // clear the "waiting…" placeholder on first real entry
+      consoleStarted = true;
+    }
+
+    const entry = snap.val() || {};
+    const number = entry.number ?? '?';
+    const zone = entry.zone != null ? entry.zone + 1 : '?';
+    const sound = entry.sound != null ? entry.sound + 1 : '?';
+    const message = entry.message || 'WRONG NUMBER';
+    const time = entry.timestamp
+      ? new Date(entry.timestamp * 1000).toLocaleTimeString()
+      : new Date().toLocaleTimeString();
+
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    line.innerHTML =
+      `<span class="log-time">[${time}]</span> ` +
+      `<span class="log-msg">${message}</span> ` +
+      `<span class="log-detail">— rolled ${number} (Zone ${zone}) while Sound ${sound} was playing</span>`;
+
+    consoleBox.appendChild(line);
+    consoleBox.scrollTop = consoleBox.scrollHeight; // auto-scroll to newest
+
+    // keep DOM light — drop oldest lines past 30
+    while (consoleBox.children.length > 30) {
+      consoleBox.removeChild(consoleBox.firstChild);
+    }
+  });
+</script>
+
+</body>
+</html>
