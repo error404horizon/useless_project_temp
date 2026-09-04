@@ -37,12 +37,9 @@ Resistors - 1k,10k ohm, Jumper wires, Push button, Buzzer, LCD, RTC module, ESP3
 ### Implementation
 For Software: Arduino IDE
 
-
-### Project Documentation
-For Software: 
-
 # Screenshots (Add at least 3)
-![Screenshot1](Add screenshot 1 here with proper name)
+![Screenshot1](<img width="1882" height="1030" alt="Screenshot 2026-09-04 055047" src="https://github.com/user-attachments/assets/e24e7628-1943-4741-9cf4-7473b23b1ad1" />
+)
 *Add caption explaining what this shows*
 
 ![Screenshot2](Add screenshot 2 here with proper name)
@@ -58,10 +55,12 @@ For Software:
 For Hardware:
 
 # Schematic & Circuit
-![Circuit](Add your circuit diagram here)
+![Circuit](<img width="925" height="853" alt="image" src="https://github.com/user-attachments/assets/6694122c-9db0-487c-a1db-6fe886e3f6d7" />
+)
 *Add caption explaining connections*
 
-![Schematic](Add your schematic diagram here)
+![Schematic](<img width="1600" height="838" alt="image" src="https://github.com/user-attachments/assets/d657d51b-b3c1-4d95-9191-259be795985a" />
+)
 *Add caption explaining the schematic*
 
 # Build Photos
