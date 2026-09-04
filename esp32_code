@@ -1,0 +1,646 @@
+#include <Wire.h>
+#include <RTClib.h>
+#include <LiquidCrystal_I2C.h>
+#include <WiFi.h>
+#include <Firebase_ESP_Client.h>
+#include "addons/TokenHelper.h"
+#include "addons/RTDBHelper.h"
+
+
+// ============================================================
+//                      PIN CONFIGURATION
+// ============================================================
+
+#define BUTTON_PIN 27
+#define BUZZER_PIN 25
+#define BUZZER_CHANNEL 0
+#define BUZZER_RESOLUTION 8
+
+
+// ============================================================
+//                      LCD / RTC
+// ============================================================
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+RTC_DS3231 rtc;
+
+
+// ============================================================
+//                      ALARM TIME
+// ============================================================
+
+uint8_t alarmHour = 7;
+uint8_t alarmMinute = 0;
+
+
+// ============================================================
+//                      WIFI
+// ============================================================
+
+const char* WIFI_SSID = "MECAP-WPA2";
+const char* WIFI_PASS = "8b140b20e7";
+bool wifiConnected = false;
+
+
+// ============================================================
+//                      FIREBASE
+// ============================================================
+
+#define API_KEY "AIzaSyD_H2x3EXgKTDTCOKYtnb68ImCdg4lWnx4"
+#define DATABASE_URL "https://alarming-alarm-default-rtdb.firebaseio.com"
+
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+bool firebaseReady = false;
+
+uint32_t lastFirebasePoll = 0;
+const uint32_t firebasePollInterval = 1500; // ms
+
+
+// ============================================================
+//                      GAME VARIABLES
+// ============================================================
+
+uint8_t targets[5];
+bool alarmActive = false;
+bool alarmTriggeredToday = false;
+uint32_t attempts = 0;
+uint32_t alarmStartMillis = 0;
+
+const uint8_t zoneLow[5] = { 0, 11, 21, 31, 41 };
+const uint8_t zoneHigh[5] = { 10, 20, 30, 40, 50 };
+
+const char* failMessages[] = {
+  "NOPE.", "TRY AGAIN.", "UNFORTUNATE.", "THE UNIVERSE SAID NO.", "STILL NO."
+};
+const int failMessageCount = 5;
+
+
+// ============================================================
+//                  BUTTON INTERRUPT & DEBOUNCE
+// ============================================================
+
+volatile bool buttonPressedFlag = false;
+volatile uint32_t lastInterruptTime = 0;
+const uint32_t interruptDebounceDelay = 200; // ms
+
+void IRAM_ATTR buttonISR() {
+  uint32_t now = millis();
+  if (now - lastInterruptTime > interruptDebounceDelay) {
+    lastInterruptTime = now;
+    buttonPressedFlag = true;
+  }
+}
+
+
+// ============================================================
+//                      LCD DISPLAY
+// ============================================================
+
+uint32_t lastDisplayToggle = 0;
+bool displayAltPage = false;
+
+
+// ============================================================
+//                  SOUND SYSTEM (LEDC PWM)
+// ============================================================
+
+int currentSound = 0;
+uint32_t soundTimer = 0;
+int soundStep = 0;
+int currentFrequency = 500;
+
+void playTone(uint32_t freq) {
+  #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+    ledcWriteTone(BUZZER_PIN, freq);
+  #else
+    ledcWriteTone(BUZZER_CHANNEL, freq);
+  #endif
+}
+
+void startCurrentSound() {
+  soundTimer = millis();
+  soundStep = 0;
+  currentFrequency = 500;
+  Serial.print("[SOUND] CURRENT SOUND = ");
+  Serial.println(currentSound + 1);
+}
+
+void stopBuzzer() {
+  playTone(0);
+  Serial.println("[BUZZER] OFF");
+}
+
+void updateSound1() {
+  uint32_t now = millis();
+  if (now - soundTimer >= 150) {
+    soundTimer = now;
+    playTone((soundStep % 2 == 0) ? 1800 : 700);
+    soundStep++;
+  }
+}
+
+void updateSound2() {
+  uint32_t now = millis();
+  if (now - soundTimer >= 25) {
+    soundTimer = now;
+    playTone(currentFrequency);
+    currentFrequency += 80;
+    if (currentFrequency >= 2200) currentFrequency = 500;
+  }
+}
+
+void updateSound3() {
+  uint32_t now = millis();
+  if (now - soundTimer >= 400) {
+    soundTimer = now;
+    playTone((soundStep % 2 == 0) ? 500 : 2200);
+    soundStep++;
+  }
+}
+
+void updateSound4() {
+  uint32_t now = millis();
+  if (now - soundTimer >= 250) {
+    soundTimer = now;
+    playTone((soundStep % 2 == 0) ? 1800 : 900);
+    soundStep++;
+  }
+}
+
+void updateSound5() {
+  uint32_t now = millis();
+  if (now - soundTimer >= 180) {
+    soundTimer = now;
+    int frequencies[] = { 400, 2500, 800, 1800, 600, 2200 };
+    playTone(frequencies[soundStep % 6]);
+    soundStep++;
+  }
+}
+
+void updateBuzzerSound() {
+  if (!alarmActive) return;
+  switch (currentSound) {
+    case 0: updateSound1(); break;
+    case 1: updateSound2(); break;
+    case 2: updateSound3(); break;
+    case 3: updateSound4(); break;
+    case 4: updateSound5(); break;
+  }
+}
+
+void changeSound() {
+  currentSound++;
+  if (currentSound >= 5) currentSound = 0;
+  Serial.print("Changing to SOUND ");
+  Serial.println(currentSound + 1);
+  startCurrentSound();
+
+  if (firebaseReady) {
+    Firebase.RTDB.setInt(&fbdo, "/alarm/currentSound", currentSound);
+  }
+}
+
+
+// ============================================================
+//                  GENERATE TARGETS
+// ============================================================
+
+void generateTargets() {
+  Serial.println("GENERATING TARGET NUMBERS");
+  for (int i = 0; i < 5; i++) {
+    targets[i] = random(zoneLow[i], zoneHigh[i] + 1);
+    Serial.print("Zone "); Serial.print(i + 1);
+    Serial.print(" -> "); Serial.println(targets[i]);
+  }
+}
+
+bool matchesTarget(uint8_t num) {
+  for (int i = 0; i < 5; i++) {
+    if (targets[i] == num) return true;
+  }
+  return false;
+}
+
+uint8_t zoneOf(uint8_t num) {
+  for (int i = 0; i < 5; i++) {
+    if (num >= zoneLow[i] && num <= zoneHigh[i]) return i;
+  }
+  return 4;
+}
+
+
+// ============================================================
+//                  UPDATE IDLE SCREEN
+// ============================================================
+
+void updateIdleScreen() {
+  lcd.clear();
+  if (!displayAltPage) {
+    DateTime now = rtc.now();
+    char buf[17];
+    snprintf(buf, sizeof(buf), "TIME: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
+    lcd.setCursor(0, 0); lcd.print(buf);
+    snprintf(buf, sizeof(buf), "ALARM: %02d:%02d", alarmHour, alarmMinute);
+    lcd.setCursor(0, 1); lcd.print(buf);
+  } else {
+    lcd.setCursor(0, 0);
+    if (wifiConnected) {
+      lcd.print("WiFi CONNECTED");
+      lcd.setCursor(0, 1);
+      lcd.print(WiFi.localIP().toString());
+    } else {
+      lcd.print("WiFi DISCONNECTED");
+      lcd.setCursor(0, 1);
+      lcd.print("OFFLINE MODE");
+    }
+  }
+}
+
+
+// ============================================================
+//                  FIREBASE PUSH HELPERS
+// ============================================================
+
+void pushStatus() {
+  if (!firebaseReady) return;
+  Firebase.RTDB.setString(&fbdo, "/alarm/status", alarmActive ? "active" : "idle");
+  Firebase.RTDB.setInt(&fbdo, "/alarm/attempts", attempts);
+  Firebase.RTDB.setInt(&fbdo, "/alarm/currentSound", currentSound);
+}
+
+void pushFailedAttemptLog(uint8_t num, uint8_t zone, const char* message) {
+  if (!firebaseReady) return;
+
+  FirebaseJson json;
+  json.set("number", num);
+  json.set("zone", zone);
+  json.set("sound", currentSound);
+  json.set("message", message);
+  json.set("timestamp", (int)rtc.now().unixtime());
+
+  Firebase.RTDB.pushJSON(&fbdo, "/alarm/logs", &json);
+}
+
+
+// ============================================================
+//                  START ALARM
+// ============================================================
+
+void startAlarmSession() {
+  generateTargets();
+
+  attempts = 0;
+  currentSound = 0;
+  alarmActive = true;
+  alarmStartMillis = millis();
+
+  Serial.println("ALARM STARTED");
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("GOOD MORNING.");
+  lcd.setCursor(0, 1);
+  lcd.print("YOUR FATE AWAITS");
+
+  startCurrentSound();
+  pushStatus();
+
+  delay(1500);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ALARM SOUND 1");
+  lcd.setCursor(0, 1);
+  lcd.print("PRESS BUTTON");
+
+  buttonPressedFlag = false;
+}
+
+
+// ============================================================
+//                  END ALARM (normal win)
+// ============================================================
+
+void endAlarmSession() {
+  stopBuzzer();
+  alarmActive = false;
+  alarmTriggeredToday = true;
+
+  uint32_t elapsedSec = (millis() - alarmStartMillis) / 1000;
+  uint32_t mins = elapsedSec / 60;
+  uint32_t secs = elapsedSec % 60;
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ALARM DEFEATED");
+  lcd.setCursor(0, 1);
+  char buf[17];
+  snprintf(buf, sizeof(buf), "ATT:%d %02d:%02d", attempts, mins, secs);
+  lcd.print(buf);
+
+  Serial.println("ALARM DEFEATED");
+  pushStatus();
+
+  delay(3000);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("PRODUCTIVITY:");
+  lcd.setCursor(0, 1);
+  lcd.print("0%");
+  delay(3000);
+
+  updateIdleScreen();
+}
+
+
+// ============================================================
+//                  KILL SWITCH (forced stop, no stats)
+// ============================================================
+
+void killAlarmSession() {
+  stopBuzzer();
+  alarmActive = false;
+  alarmTriggeredToday = true;
+
+  Serial.println("KILLED VIA DASHBOARD");
+  pushStatus();
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ALARM KILLED");
+  lcd.setCursor(0, 1);
+  lcd.print("VIA DASHBOARD");
+  delay(2000);
+
+  updateIdleScreen();
+}
+
+
+// ============================================================
+//                  BUTTON PRESS
+// ============================================================
+
+void handleButtonPress() {
+  attempts++;
+  Serial.println(">>> BUTTON PRESS DETECTED <<<");
+
+  uint8_t num = random(0, 51);
+  Serial.print("Random Number: ");
+  Serial.println(num);
+
+  if (matchesTarget(num)) {
+    Serial.println(">>> CORRECT NUMBER! <<<");
+    endAlarmSession();
+    return;
+  }
+
+  Serial.println(">>> WRONG NUMBER <<<");
+
+  uint8_t zone = zoneOf(num);
+  const char* msg = failMessages[random(0, failMessageCount)];
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("NUMBER: ");
+  lcd.print(num);
+  lcd.setCursor(0, 1);
+  lcd.print(msg);
+  delay(500);
+
+  changeSound();
+  pushFailedAttemptLog(num, zone, msg);
+  pushStatus();
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ALARM SOUND ");
+  lcd.print(currentSound + 1);
+  lcd.setCursor(0, 1);
+  lcd.print("PRESS BUTTON");
+}
+
+
+// ============================================================
+//                  WIFI EVENT
+// ============================================================
+
+void onWiFiEvent(WiFiEvent_t event) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      wifiConnected = true;
+      Serial.print("[WiFi] Connected! IP: ");
+      Serial.println(WiFi.localIP());
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      wifiConnected = false;
+      Serial.println("[WiFi] Disconnected.");
+      WiFi.reconnect();
+      break;
+    default:
+      break;
+  }
+}
+
+
+// ============================================================
+//                  FIREBASE POLLING (called from loop)
+// ============================================================
+
+void pollFirebase() {
+  if (!firebaseReady) return;
+  if (millis() - lastFirebasePoll < firebasePollInterval) return;
+  lastFirebasePoll = millis();
+
+  // ---- Kill switch ----
+  if (Firebase.RTDB.getBool(&fbdo, "/alarm/killSwitch")) {
+    if (fbdo.boolData() == true) {
+      if (alarmActive) killAlarmSession();
+      Firebase.RTDB.setBool(&fbdo, "/alarm/killSwitch", false);
+    }
+  }
+
+  // ---- Alarm time ----
+  if (Firebase.RTDB.getInt(&fbdo, "/alarm/alarmHour")) {
+    int h = fbdo.intData();
+    if (h >= 0 && h <= 23 && h != alarmHour) {
+      alarmHour = h;
+      alarmTriggeredToday = false;
+      if (!alarmActive) updateIdleScreen();
+    }
+  }
+  if (Firebase.RTDB.getInt(&fbdo, "/alarm/alarmMinute")) {
+    int m = fbdo.intData();
+    if (m >= 0 && m <= 59 && m != alarmMinute) {
+      alarmMinute = m;
+      alarmTriggeredToday = false;
+      if (!alarmActive) updateIdleScreen();
+    }
+  }
+
+  // ---- Clock sync request ----
+  if (Firebase.RTDB.getBool(&fbdo, "/alarm/clockSet/requested")) {
+    if (fbdo.boolData() == true) {
+      int y = 2026, mo = 1, d = 1, h = 0, mi = 0;
+
+      if (Firebase.RTDB.getInt(&fbdo, "/alarm/clockSet/year"))   y  = fbdo.intData();
+      if (Firebase.RTDB.getInt(&fbdo, "/alarm/clockSet/month"))  mo = fbdo.intData();
+      if (Firebase.RTDB.getInt(&fbdo, "/alarm/clockSet/day"))    d  = fbdo.intData();
+      if (Firebase.RTDB.getInt(&fbdo, "/alarm/clockSet/hour"))   h  = fbdo.intData();
+      if (Firebase.RTDB.getInt(&fbdo, "/alarm/clockSet/minute")) mi = fbdo.intData();
+
+      rtc.adjust(DateTime(y, mo, d, h, mi, 0));
+      Serial.println("[RTC] Clock synced from dashboard");
+
+      Firebase.RTDB.setBool(&fbdo, "/alarm/clockSet/requested", false);
+
+      if (!alarmActive) updateIdleScreen();
+    }
+  }
+}
+
+
+// ============================================================
+//                      SETUP
+// ============================================================
+
+void setup() {
+  Serial.begin(115200);
+
+  // Button Interrupt setup
+  pinMode(BUTTON_PIN, INPUT_PULLDOWN);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, RISING);
+
+  // Buzzer PWM (LEDC) setup
+  #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+    ledcAttach(BUZZER_PIN, 2000, BUZZER_RESOLUTION);
+  #else
+    ledcSetup(BUZZER_CHANNEL, 2000, BUZZER_RESOLUTION);
+    ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
+  #endif
+  stopBuzzer();
+
+  Wire.begin(21, 22);
+  lcd.init();
+  lcd.backlight();
+
+  if (!rtc.begin()) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("RTC NOT FOUND");
+    Serial.println("RTC NOT FOUND!");
+    while (1) delay(1000);
+  }
+
+  randomSeed(analogRead(34));
+
+  // ---- WiFi ----
+  WiFi.onEvent(onWiFiEvent);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Connecting WiFi");
+
+  int wifiAttempts = 0;
+  while (WiFi.status() != WL_CONNECTED && wifiAttempts < 20) {
+    delay(500);
+    Serial.print(".");
+    wifiAttempts++;
+  }
+
+  lcd.clear();
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = true;
+    lcd.setCursor(0, 0);
+    lcd.print("WiFi Connected");
+    lcd.setCursor(0, 1);
+    lcd.print(WiFi.localIP().toString());
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    delay(2000);
+  } else {
+    wifiConnected = false;
+    lcd.setCursor(0, 0);
+    lcd.print("WiFi Failed");
+    lcd.setCursor(0, 1);
+    lcd.print("Offline Mode");
+    Serial.println("WiFi failed.");
+    delay(2000);
+  }
+
+  // ---- Firebase ----
+  if (wifiConnected) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Connecting");
+    lcd.setCursor(0, 1);
+    lcd.print("Firebase...");
+
+    config.api_key = API_KEY;
+    config.database_url = DATABASE_URL;
+
+    if (Firebase.signUp(&config, &auth, "", "")) {
+      Serial.println("[Firebase] Anonymous sign-up OK");
+      firebaseReady = true;
+    } else {
+      Serial.printf("[Firebase] Sign-up failed: %s\n", config.signer.signupError.message.c_str());
+      firebaseReady = false;
+    }
+
+    config.token_status_callback = tokenStatusCallback;
+    Firebase.begin(&config, &auth);
+    Firebase.reconnectWiFi(true);
+
+    delay(1000);
+
+    if (firebaseReady) {
+      if (Firebase.RTDB.getInt(&fbdo, "/alarm/alarmHour")) alarmHour = fbdo.intData();
+      if (Firebase.RTDB.getInt(&fbdo, "/alarm/alarmMinute")) alarmMinute = fbdo.intData();
+      pushStatus();
+    }
+  }
+
+  updateIdleScreen();
+}
+
+
+// ============================================================
+//                      MAIN LOOP
+// ============================================================
+
+void loop() {
+  pollFirebase();
+
+  DateTime now = rtc.now();
+
+  if (!(now.hour() == alarmHour && now.minute() == alarmMinute)) {
+    alarmTriggeredToday = false;
+  }
+
+  if (!alarmActive && !alarmTriggeredToday &&
+      now.hour() == alarmHour && now.minute() == alarmMinute) {
+    startAlarmSession();
+  }
+
+  if (alarmActive) {
+    updateBuzzerSound();
+
+    if (buttonPressedFlag) {
+      buttonPressedFlag = false;
+      handleButtonPress();
+    }
+  } else {
+    buttonPressedFlag = false; // Discard clicks outside active alarm
+    if (millis() - lastDisplayToggle > 3000) {
+      lastDisplayToggle = millis();
+      displayAltPage = !displayAltPage;
+      updateIdleScreen();
+    }
+  }
+
+  delay(5);
+}
