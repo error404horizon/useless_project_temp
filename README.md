@@ -14,37 +14,32 @@
 - Member 2: Aldrin Baiju - Model Engineering College 
 
 ### Project Description
-[2-3 lines about what your project does]
+ The project is about an alarm that turns off in a funny manner
 
 ### The Problem (that doesn't exist)
-[What ridiculous problem are you solving?]
+In our life we've always abused the use of the "snooze" button of alarms, extending the waking time and ending up sleeping more time than usual.
 
 ### The Solution (that nobody asked for)
-[How are you solving it? Keep it fun!]
+This project aims to completely eliminate the snooze button by introducing a dismissing button that turns it off by pure luck
 
 ## Technical Details
+A random number generator is set up which choses a number between 1 and 50 every time you push the button. Each 10 number intervals is mapped to a certain annoying buzzer frequency, and so are each "dismissing" numbers. So in short, you have a 5 in 50 chance to turn off the alarm, or a grand possibility of 1/10
+
 ### Technologies/Components Used
 For Software:
-- [Languages used]
-- [Frameworks used]
-- [Libraries used]
-- [Tools used]
+- Languages used: C++, JS, html
+- Applications used: Arduino IDE, VS code 
+- Simulation: https://wokwi.com/
 
 For Hardware:
-- [List main components]
-- [List specifications]
-- [List tools required]
+Resistors - 1k,10k ohm, Jumper wires, Push button, Buzzer, LCD, RTC module, ESP32, connecting USBs
 
 ### Implementation
-For Software:
-# Installation
-[commands]
+For Software: Arduino IDE
 
-# Run
-[commands]
 
 ### Project Documentation
-For Software:
+For Software: 
 
 # Screenshots (Add at least 3)
 ![Screenshot1](Add screenshot 1 here with proper name)
