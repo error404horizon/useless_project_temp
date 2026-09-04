@@ -46,7 +46,7 @@ bool wifiConnected = false;
 //                      FIREBASE
 // ============================================================
 
-#define API_KEY "AIzaSyD_H2x3EXgKTDTCOKYtnb68ImCdg4lWnx4"
+#define API_KEY ""
 #define DATABASE_URL "https://alarming-alarm-default-rtdb.firebaseio.com"
 
 FirebaseData fbdo;
