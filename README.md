@@ -2,7 +2,7 @@
 
 
 
-# Alarming Alarm 🎯
+# Alarming Alarm ⏰
 
 
 ## Basic Details
@@ -23,74 +23,65 @@ In our life we've always abused the use of the "snooze" button of alarms, extend
 This project aims to completely eliminate the snooze button by introducing a dismissing button that turns it off by pure luck
 
 ## Technical Details
-A random number generator is set up which choses a number between 1 and 50 every time you push the button. Each 10 number intervals is mapped to a certain annoying buzzer frequency, and so are each "dismissing" numbers. So in short, you have a 5 in 50 chance to turn off the alarm, or a grand possibility of 1/10
+
+The Alarming Alarm is an ESP32-based embedded system that combines real-time clock functionality, random number generation, an LCD display, and an annoying buzzer mechanism to create a deliberately useless alarm system.
+
+### Working Principle
+
+- The ESP32 acts as the main microcontroller and controls all peripherals.
+- The DS3231 RTC module provides accurate timekeeping and is used to trigger the alarm at the configured time.
+- A 16×2 I2C LCD displays the current time, alarm status, generated random number, and system messages.
+- A push button is used by the user to attempt to dismiss the alarm.
+- Every button press generates a random number from 1 to 50.
+- The numbers are divided into **five ranges of 10 numbers each**, with each range assigned a different buzzer frequency.
+- Five numbers out of 50 act as lucky dismissal numbers.
+- If a lucky number is generated, the alarm is turned off.
+- Otherwise, the alarm continues and the buzzer frequency changes according to the generated number.
 
 ### Technologies/Components Used
 For Software:
-- Languages used: C++, JS, html
-- Applications used: Arduino IDE, VS code 
+- Languages used: C++, JS, HTML,CSS
+- Applications used: Arduino IDE, VS code, Firebase 
 - Simulation: https://wokwi.com/
 
 For Hardware:
 Resistors - 1k,10k ohm, Jumper wires, Push button, Buzzer, LCD, RTC module, ESP32, connecting USBs
 
 ### Implementation
-For Software: Arduino IDE
+A random number generator is set up which chooses a number between 1 and 50 every time you push the button. Each 10 number intervals is mapped to a certain annoying buzzer frequency, and so are each "dismissing" numbers. So in short, you have a 5 in 50 chance to turn off the alarm, or a grand possibility of 1/10
 
 # Screenshots (Add at least 3)
-![Screenshot1](<img width="1882" height="1030" alt="Screenshot 2026-09-04 055047" src="https://github.com/user-attachments/assets/e24e7628-1943-4741-9cf4-7473b23b1ad1" />
-)
-*Add caption explaining what this shows*
+![Screenshot1](assets/screenshots/Screenshot%202026-09-04%20055047.png)
 
-![Screenshot2](Add screenshot 2 here with proper name)
-*Add caption explaining what this shows*
 
-![Screenshot3](Add screenshot 3 here with proper name)
-*Add caption explaining what this shows*
+![Screenshot2](assets/screenshots/Screenshot%202026-09-04%20055219.png)
 
-# Diagrams
-![Workflow](Add your workflow/architecture diagram here)
-*Add caption explaining your workflow*
 
-For Hardware:
+![Screenshot3](assets/screenshots/WhatsApp%20Image%202026-09-04%20at%206.39.16%20AM.jpeg)
 
 # Schematic & Circuit
-![Circuit](<img width="925" height="853" alt="image" src="https://github.com/user-attachments/assets/6694122c-9db0-487c-a1db-6fe886e3f6d7" />
-)
-*Add caption explaining connections*
+![Circuit](assets/screenshots/WhatsApp%20Image%202026-09-04%20at%205.59.52%20AM.jpeg)
+*The circuit shows the complete hardware architecture of the Alarming Alarm. The ESP32 serves as the main controller, interfacing with the DS3231 RTC and 16×2 I2C LCD through the I2C bus. The RTC provides accurate timekeeping, while the LCD displays the alarm status and generated numbers. A push button connected to a digital GPIO is used to generate a new random number, and the passive buzzer produces different frequencies based on the generated number. Together, these components implement the random-number-based alarm dismissal mechanism.*
 
-![Schematic](<img width="1600" height="838" alt="image" src="https://github.com/user-attachments/assets/d657d51b-b3c1-4d95-9191-259be795985a" />
-)
-*Add caption explaining the schematic*
+![Schematic](assets/screenshots/Screenshot%202026-09-04%20055131.png)
 
 # Build Photos
-![Components](Add photo of your components here)
-*List out all components shown*
 
-![Build](Add photos of build process here)
-*Explain the build steps*
+## Final Product
 
-![Final](Add photo of final product here)
-*Explain the final build*
+![Final Product](assets/screenshots/WhatsApp%20Image%202026-09-04%20at%206.45.58%20AM.jpeg)
+*The final Alarming Alarm prototype.*
 
-### Project Demo
-# Video
-[Add your demo video link here]
-*Explain what the video demonstrates*
+# Project Demo
+## Video
 
-# Additional Demos
-[Add any extra demo materials/links]
+[🎥 Watch the Alarming Alarm Demo](https://drive.google.com/file/d/10BJ9cb-xXH3knYk9JTLaL4JBsSJlJ3Ed/view?usp=drive_link)
 
-## Team Contributions
-- [Name 1]: [Specific contributions]
-- [Name 2]: [Specific contributions]
-- [Name 3]: [Specific contributions]
+*The video demonstrates the working of the Alarming Alarm.*
+
 
 ---
 Made with ❤️ at TinkerHub Useless Projects 
 
 ![Static Badge](https://img.shields.io/badge/TinkerHub-24?color=%23000000&link=https%3A%2F%2Fwww.tinkerhub.org%2F)
 ![Static Badge](https://img.shields.io/badge/UselessProjects--26-26?link=https%3A%2F%2Ftinkerhub.org%2Fevents%2F1M8ORET9A1%2Fuseless-projects-3.0)
-
-
-
